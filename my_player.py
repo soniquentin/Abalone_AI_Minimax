@@ -72,9 +72,7 @@ class MyPlayer(PlayerAbalone):
         """
         super().__init__(piece_type,name,time_limit,*args)
 
-        #transposition table to store the visited nodes
-        self.transposition_table = {}
-        self.zobrist_table = [[[[random.randint(1,2**64 - 1) for i in range(2)] for j in range(8)] for k in range(8)] for l in range(8)]
+        self.tt = TranspositionTable()
 
         self.visited_nodes = 0
         self.cumulated_time = 0
@@ -100,7 +98,9 @@ class MyPlayer(PlayerAbalone):
         self.time_consumed = time.time()
 
         maximizing_player = self.piece_type == "W"
-        depth = 3
+        depth = 4
+
+        print(current_state.get_rep())
 
         value, best_action = self.minmax_alphabeta(current_state, depth, -math.inf, math.inf, maximizing_player)
 
@@ -110,28 +110,13 @@ class MyPlayer(PlayerAbalone):
         self.action_number += 1
         if MyPlayer.log:
             with open(self.text_file_log, "a") as f:
-                #f.write(f"Zobrist : {self.compute_zobristhash(current_state)}, ")
-                f.write(f"Action {self.action_number} : {self.time_consumed} s (cumulated time {self.cumulated_time} s), {self.visited_nodes} visited nodes, {value} value\n")
+                f.write(f"Action {self.action_number} : {round(self.time_consumed,4)} s (cum. time {round(self.cumulated_time,4)} s), {self.visited_nodes} visited nodes, size tt {len(self.tt.tab)}, {round(value,8)} value\n")
                 
         self.visited_nodes = 0
 
         return best_action
 
-    
-    def compute_zobristhash(self, current_state: GameState): 
-        """
-        Function to compute the Zobrist Hashing of the current state.
 
-        https://iq.opengenus.org/zobrist-hashing-game-theory/
-        """
-        h = 0
-
-        #Get the environment
-        for coord, player in current_state.get_rep().get_env().items() :
-            x,z,y = MyPlayer.to_cube[coord]
-            h ^= self.zobrist_table[x][z][y][int(player.get_type() == "W")]
-
-        return h
 
     
     def winner_score(self, current_state: GameState) -> float:
@@ -271,33 +256,11 @@ class MyPlayer(PlayerAbalone):
 
         return int(push) + int(get_out_of_edge)
 
+
+
+    def get_ordered_possible_actions(self, current_state: GameState) -> list[Action]:
         """
-        #Some transformations to get the difference between the two grids
-        current_grid = current_state.get_rep().get_grid()
-        current_grid = np.array(   [[ 1 if current_grid[i][j] == "W" else -1 if current_grid[i][j] == "B" else 0  for j in range(9)   ]   for i in range(9)  ]   )
-        next_grid = next_state.get_rep().get_grid()
-        next_grid = np.array(   [[ 1 if next_grid[i][j] == "W" else -1 if next_grid[i][j] == "B" else 0  for j in range(9)   ]   for i in range(9)  ]   )
-        diff_grid = next_grid - current_grid
-
-        # Check if the action is a push : if we find a 2 or a -2 in the difference grid
-        push =  2 in diff_grid or -2 in diff_grid
-
-        #Count the number of marbles in edge
-        get_out_of_edge = False
-        player_is_white = self.get_piece_type() == "W"
-        for grid_coord, coord in MyPlayer.grid_to_coord.items():
-            x,y,z = MyPlayer.to_cube[coord] #Get the cube coordinates
-            if next_grid[grid_coord] == int(player_is_white) and max(abs(x), abs(y), abs(z)) == 4 :
-                get_out_of_edge = True
-                break
-    
-        return int(push) + int(get_out_of_edge)
-        """
-
-
-    def ordering_actions(self, current_state: GameState, possible_actions : list[Action]) -> list[Action]:
-        """
-        Function to order the actions.
+        Function to get the list of possible actions ordered by the guess value.
 
         Args:
             current_state (GameState): Current game state representation
@@ -307,6 +270,7 @@ class MyPlayer(PlayerAbalone):
             list[Action]: the ordered list of actions
         """
 
+        possible_actions = current_state.get_possible_actions()
         action_guess = { action : self.guess_value(action) for action in possible_actions }
 
         #Get the list of actions sorted by the guess value
@@ -328,20 +292,22 @@ class MyPlayer(PlayerAbalone):
         Returns:
             float: the value of the node
         """
+        hasft = self.tt.hashfALPHA
+        hash_state = self.tt.compute_zobristhash(current_state) #hash of the current state
         
         #Terminal node
         if depth == 0 or current_state.is_done():
-            return self.utility(current_state, depth, maximizing_player), None
+            value = self.utility(current_state, depth, maximizing_player)
+            if depth == 0 : 
+                #Exact evaluation
+                self.tt.store_entry(hash_state, depth, self.tt.hashfEXACT, value, None)
+            return value, None
 
-        """historic_log/
-        #Check in the transposition table
-        #Transposition table has the form : { zobrist_hash : (depth, value, action) }
-        state_hash = self.compute_zobristhash(current_state)
-        if state_hash in self.transposition_table :
-            if self.transposition_table[state_hash][0] >= depth :
-                return self.transposition_table[state_hash][1], self.transposition_table[state_hash][2]
-        """
-    
+
+        #Search in the transposition table
+        val = self.tt.ProbeHash(hash_state, depth, alpha, beta, maximizing_player)
+        if val != self.tt.LookupFailed :
+            return val
 
 
         #Initialize score and action
@@ -349,8 +315,8 @@ class MyPlayer(PlayerAbalone):
 
 
         #Find the best successor
-        possible_actions = self.ordering_actions( current_state, current_state.get_possible_actions() )
-        #possible_actions = current_state.get_possible_actions()
+        #possible_actions = self.get_ordered_possible_actions(current_state)
+        possible_actions = current_state.get_possible_actions()
         for action in possible_actions:
 
             next_state = action.get_next_game_state()
@@ -360,20 +326,103 @@ class MyPlayer(PlayerAbalone):
             if maximizing_player:
                 if score > best_score:
                     best_score, best_action = score, action
-                alpha = max(alpha, best_score)
+                if best_score > alpha:
+                    alpha = best_score
+                    hasft = self.tt.hashfEXACT
                 if best_score >= beta:
+                    self.tt.store_entry(hash_state, depth, self.tt.hashfBETA, best_score, best_action)
                     return best_score, best_action
             else:
                 if score < best_score:
                     best_score, best_action = score, action
-                beta = min(beta, best_score)
+                if best_score < beta:
+                    beta = best_score
+                    hasft = self.tt.hashfEXACT
                 if best_score <= alpha:
+                    self.tt.store_entry(hash_state, depth, self.tt.hashfBETA, best_score, best_action)
                     return best_score, best_action
-            
 
+        
+        self.tt.store_entry(hash_state, depth, hasft, best_score, best_action)
         return best_score, best_action
 
 
+class TranspositionTable:
+    """
+    Class to implement a transposition table.
+
+    Inspired from https://web.archive.org/web/20071031100051/http://www.brucemo.com/compchess/programming/hashing.htm :
+
+        Extract from the link :
+
+        In an alpha-beta search, rarely do you get an exact value when you search a node.  
+        "Alpha" and "beta" exist to help you prune out useless sub-trees, but the minor disadvantage to using alpha-beta is that you don't often know exactly how bad or good a node is, you just know that it is bad enough or good enough that you don't need to waste any more time on it.
+
+        Of course, this raises the question as to what value you store in the hash element, and what you can do with it when you retrieve it.  
+        The answer is to store a value, and a flag that indicates what the value means. 
+        In my example above, if you store, let's say, a 16 in the value field, and "hashfEXACT" in the flags field, this means that the value of the node was exactly 16. 
+        If you store "hashfALPHA" in the flags field, the value of the node was at most 16.  If you store "hashfBETA", the value is at least 16.
+    """
+    
+    
+    LookupFailed = -1
+    hashfEXACT = 0
+    hashfALPHA = 1 
+    hashfBETA = 2
 
 
-            
+    def __init__(self):
+        
+        #transposition table to store the visited nodes
+        self.tab = {}
+        self.zobrist_table = [[[[random.randint(1,2**64 - 1) for i in range(2)] for j in range(8)] for k in range(8)] for l in range(8)]
+
+
+
+    def compute_zobristhash(self, current_state: GameState): 
+        """
+        Function to compute the Zobrist Hashing of the current state.
+
+        https://iq.opengenus.org/zobrist-hashing-game-theory/
+        """
+        h = 0
+
+        #Get the environment
+        for coord, player in current_state.get_rep().get_env().items() :
+            x,z,y = MyPlayer.to_cube[coord]
+            h ^= self.zobrist_table[x][z][y][int(player.get_type() == "W")]
+
+        return h
+
+
+    def ProbeHash(self, state_hash: float, depth : int, alpha : float, beta : float, maximizing_player : bool) :
+        """
+        Function to get the entry of the transposition table.
+        """
+        entry = self.tab.get(state_hash, TranspositionTable.LookupFailed)
+        alpha = alpha if maximizing_player else -beta
+        beta = beta if maximizing_player else -alpha
+
+        if entry != TranspositionTable.LookupFailed and entry["depth"] >= depth:
+            flags = entry["flags"]
+            if flags == TranspositionTable.hashfEXACT : 
+                return entry["value"], entry["move"]
+            elif flags == TranspositionTable.hashfALPHA and entry["value"] <= alpha: 
+                return alpha, entry["move"]
+            elif flags == TranspositionTable.hashfBETA and entry["value"] >= beta:
+                return beta, entry["move"]
+        
+        return TranspositionTable.LookupFailed
+    
+
+    def store_entry(self, state_hash: int, depth: int, flags: float, value : float, move : Action): 
+        """
+        Function to store the entry of the transposition table.
+        """
+        self.tab[state_hash] = {"depth" : depth, "flags" : flags, "value" : value, "move" : move}
+
+
+    def to_json(self) -> str:
+        return {}
+
+    

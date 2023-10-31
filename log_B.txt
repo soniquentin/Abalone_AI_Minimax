@@ -1,0 +1,6 @@
+Action 1 : 22.5075 s (cum. time 22.5075 s), 62424 visited nodes, size tt 57990, 0.14880952 value
+Action 2 : 32.8572 s (cum. time 55.3647 s), 87588 visited nodes, size tt 138634, 0.13690476 value
+Action 3 : 42.7824 s (cum. time 98.1471 s), 111544 visited nodes, size tt 242186, 0.10714286 value
+Action 4 : 57.3141 s (cum. time 155.4612 s), 138917 visited nodes, size tt 370638, 0.10119048 value
+Action 5 : 76.5102 s (cum. time 231.9715 s), 202358 visited nodes, size tt 557733, 0.08928571 value
+Action 6 : 40.989 s (cum. time 272.9604 s), 161531 visited nodes, size tt 706984, 0.11309524 value
