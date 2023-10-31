@@ -98,7 +98,7 @@ class MyPlayer(PlayerAbalone):
         self.time_consumed = time.time()
 
         maximizing_player = self.piece_type == "W"
-        depth = 4
+        depth = 3
 
         print(current_state.get_rep())
 
@@ -180,47 +180,117 @@ class MyPlayer(PlayerAbalone):
         distance_center = {"W" : 0, "B" : 0}
         edge_count = {"W" : 0, "B" : 0}
         cohesion = {"W" : 0, "B" : 0}
+        threat = {"W" : 0, "B" : 0}
+
 
         #Loop over the environnement current_state.get_rep().get_env() = {  (a,b) :  <seahorse.game.game_layout.board.Piece> , ... }
         for coord, marble in current_state.get_rep().get_env().items() :
             color_marble = marble.get_type()
-            x,z,y = MyPlayer.to_cube[coord]
+            opposition_color_marble = "W" if color_marble == "B" else "B"
+            x,y,z = MyPlayer.to_cube[coord]
 
-            #Update the marble count
+
+            #########################################
+            ####### Update the marble count #########
+            #########################################
             marble_count[color_marble] += 1
 
-            #Update the distance to the center that is actually adding the max absolute value of the cube coordinates
+
+            ########################################################################################################################
+            ####### Update the distance to the center that is actually adding the max absolute value of the cube coordinates #######
+            ########################################################################################################################
             maxi_cube_coord = max(abs(x), abs(y), abs(z))
             distance_center[color_marble] += maxi_cube_coord
             
-            #Update the edge count
+
+            #Check if the marble is on the edge
             if maxi_cube_coord == 4:
+                ########################################
+                ######## Update the edge count #########
+                ########################################
                 edge_count[color_marble] += 1
-            
-            #Update the cohesion (number of neighbours of the same color)
+                
+
+                ##################################################
+                ######## Check if the marble is threaten #########
+                ##################################################
+                threaten = False
+                blocked_bonus = 0 #TODO: Bonus if the marble cannot escape the threat
+                #Find the direction to check
+                direction_to_check = []
+                if abs(x) == 4 :
+                    direction_to_check.append(  ( -int(math.copysign(1, x)) , int(math.copysign(1, x)) , 0)  )
+                    direction_to_check.append(  ( -int(math.copysign(1, x)) , 0 , int(math.copysign(1, x)) )  )
+                if abs(y) == 4 :
+                    direction_to_check.append(  (0 , -int(math.copysign(1, y)) , int(math.copysign(1, y)) )  )
+                    direction_to_check.append(  (int(math.copysign(1, y)) , -int(math.copysign(1, y)) , 0)  )
+                if abs(z) == 4 :
+                    direction_to_check.append(  (int(math.copysign(1, z)) , 0 , -int(math.copysign(1, z)))  )
+                    direction_to_check.append(  (0 , int(math.copysign(1, z)) , -int(math.copysign(1, z)))  )
+                direction_to_check = list(set(direction_to_check))
+                for a,b,c in direction_to_check :
+                    #Check superiority in the direction (to see if knock out is possible)
+                    color_edge_count = 0
+                    color_opponent_count = 0
+                    color_in_progress = color_marble
+                    cur = 0
+                    color_cur = color_marble
+                    #Count the edge's color count
+                    while color_cur == color_in_progress :
+                        color_edge_count += 1
+                        cur += 1
+                        piece_cur = current_state.get_rep().find( MyPlayer.to_coord.get( (x+a*cur, y+b*cur, z+c*cur) , -1 ) )
+                        if piece_cur == -1 :
+                            break
+                        else :
+                            color_cur = piece_cur.get_type()
+                    #Count the opponent's color count
+                    while color_cur == opposition_color_marble :
+                        color_opponent_count += 1
+                        cur += 1
+                        piece_cur = current_state.get_rep().find( MyPlayer.to_coord.get( (x+a*cur, y+b*cur, z+c*cur) , -1) )
+                        if piece_cur == -1 :
+                            break
+                        else :
+                            color_cur = piece_cur.get_type()
+                    if color_opponent_count > color_edge_count :
+                        threaten = True
+                        break
+                if threaten :
+                    threat[opposition_color_marble] += 1 #The opponent threats
+    
+
+            ############################################################################
+            ###### Update the cohesion (number of neighbours of the same color) ########
+            ############################################################################
             neighbours_cube_coord = [  (x+1, z-1, y), (x+1, z, y-1), (x, z+1, y-1), (x-1, z+1, y), (x-1, z, y+1), (x, z-1, y+1) ]
             for x_n, y_n, z_n in neighbours_cube_coord:
                 neighbour_coord = MyPlayer.to_coord.get( (x_n, y_n, z_n) , -1) 
                 neighbour = current_state.get_rep().find( neighbour_coord )
                 if neighbour != -1 and neighbour.get_type() == color_marble:
                     cohesion[color_marble] += 1
-            
-        #Compute the heuristic value
-        heuristic_value = 0
+        
+
+
 
         #1) Number of marbles difference (max 5 because if 6, a player has necessarily won)
-        heuristic_value += marble_count["W"] - marble_count["B"]
+        diff =  marble_count["W"] - marble_count["B"]
 
         #2) Number of marbles on the edge
-        heuristic_value += edge_count["B"]/marble_count["B"] - edge_count["W"]/marble_count["W"]
+        edge = edge_count["B"]/marble_count["B"] - edge_count["W"]/marble_count["W"]
 
         #3) Sum of Manhattan distance to the center
-        heuristic_value += (distance_center["B"]/marble_count["B"] - distance_center["W"]/marble_count["W"])/4
+        center = (distance_center["B"]/marble_count["B"] - distance_center["W"]/marble_count["W"])/4
 
         #4) Marbles cohesion
-        heuristic_value += (cohesion["B"]/marble_count["B"] - cohesion["W"]/marble_count["W"])/6
+        cohesion_diff = (cohesion["B"]/marble_count["B"] - cohesion["W"]/marble_count["W"])/6
 
-        return heuristic_value
+        #5) Threat
+        threat_diff = threat["W"] - threat["B"]
+
+        #print(f"diff : {diff}, edge : {edge}, center : {center}, cohesion : {cohesion_diff}, threat : {threat}")
+        
+        return diff + edge + center + 2*cohesion_diff + 0.75*threat_diff
 
 
     def guess_value(self, action : Action) :
@@ -228,7 +298,19 @@ class MyPlayer(PlayerAbalone):
         Function to guess the value of an action (for ordering the actions).
         """
         current_env = action.get_current_game_state().get_rep().get_env()
-        next_env = action.get_next_game_state().get_rep().get_env()
+        next_env = action.get_next_game_state().get_rep().get_env() 
+
+        ## Look for difference
+        numpy_current_grid = np.array( action.get_current_game_state().get_rep().get_grid() )
+        numpy_next_grid = np.array( action.get_next_game_state().get_rep().get_grid() )
+        current_mask_white = numpy_current_grid == "W"
+        current_mask_black = numpy_current_grid == "B"
+        next_mask_white = numpy_next_grid == "W"
+        next_mask_black = numpy_next_grid == "B"
+
+        #Check for dumb move : push a marble out of the edge
+        if ( (current_mask_white == next_mask_white).all() and int(next_mask_black.sum()) < int(current_mask_black.sum())) or ( (current_mask_black == next_mask_black).all() and int(next_mask_white.sum()) < int(current_mask_white.sum()))   :
+            return None #None means we don't want to select this action
 
         push = False
         get_out_of_edge = False
@@ -271,7 +353,11 @@ class MyPlayer(PlayerAbalone):
         """
 
         possible_actions = current_state.get_possible_actions()
-        action_guess = { action : self.guess_value(action) for action in possible_actions }
+        action_guess = {}
+        for action in possible_actions:
+            guess = self.guess_value(action)
+            if guess != None :
+                action_guess[action] = guess
 
         #Get the list of actions sorted by the guess value
         return sorted(action_guess, key=action_guess.get, reverse=True)
@@ -315,8 +401,8 @@ class MyPlayer(PlayerAbalone):
 
 
         #Find the best successor
-        #possible_actions = self.get_ordered_possible_actions(current_state)
-        possible_actions = current_state.get_possible_actions()
+        possible_actions = self.get_ordered_possible_actions(current_state)
+        #possible_actions = current_state.get_possible_actions()
         for action in possible_actions:
 
             next_state = action.get_next_game_state()
