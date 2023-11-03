@@ -41,7 +41,15 @@ class MyPlayer(PlayerAbalone):
             Action: Randomly selected feasible action
         """
         possible_actions = current_state.get_possible_actions()
+        """
+        list_actions = []
+        for action in possible_actions:
+            if len(action.get_next_game_state().get_rep().get_env()) >= len(current_state.get_rep().get_env()):
+                list_actions.append(action)
+        """
+        list_actions = list(possible_actions)
+
         random.seed("seahorse")
         if kwargs:
             pass
-        return random.choice(list(possible_actions))
+        return random.choice(list_actions)

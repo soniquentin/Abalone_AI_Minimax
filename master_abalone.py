@@ -56,4 +56,13 @@ class MasterAbalone(GameMaster):
             min_dist = min(dist.values())
             players_id = list(filter(lambda key: dist[key] == min_dist, dist))
             itera = list(filter(lambda x: x.get_id() in players_id, self.players))
+        
+        ### MODIF
+        print(scores)
+        list_players = self.current_game_state.players
+        time_left_players = list_players[0].get_remaining_time() + list_players[1].get_remaining_time()
+        print("Time consumed : ",2*60*15 - time_left_players)
+        print("Step :", self.current_game_state.step)
+
+        ### ENDMODIF
         return itera

@@ -125,7 +125,7 @@ if __name__=="__main__":
     parser.add_argument("-p","--port",required=False,type=int, default=16001, help="The port of the machine that hosts the GameMaster.\n\n")
     parser.add_argument("-g","--no-gui",action='store_false',default=True, help="Headless mode\n\n")
     parser.add_argument("-r","--record",action="store_true",default=False, help="Stores the succesive game states in a json file.\n\n")
-    parser.add_argument("-l","--log",required=False,choices=["DEBUG","INFO"], default="DEBUG",help="\nSets the logging level.")
+    parser.add_argument("-l","--log",required=False,choices=["DEBUG","INFO", "WARNING"], default="WARNING",help="\nSets the logging level.")
     parser.add_argument("players_list",nargs="*", help='The players')
     args=parser.parse_args()
 
@@ -148,8 +148,12 @@ if __name__=="__main__":
         folder = dirname(list_players[1])
         sys.path.append(folder)
         player2_class = __import__(splitext(basename(list_players[1]))[0], fromlist=[None])
-        player1 = player1_class.MyPlayer("W", name=splitext(basename(list_players[0]))[0]+"_1", time_limit=time_limit)
-        player2 = player2_class.MyPlayer("B", name=splitext(basename(list_players[1]))[0]+"_2", time_limit=time_limit)
+        if "2" in list_players[0] :
+            player1 = player1_class.MyPlayer2("W", name=splitext(basename(list_players[0]))[0]+"_1", time_limit=time_limit)
+            player2 = player2_class.MyPlayer3("B", name=splitext(basename(list_players[1]))[0]+"_2", time_limit=time_limit)
+        else :
+            player1 = player1_class.MyPlayer3("W", name=splitext(basename(list_players[0]))[0]+"_1", time_limit=time_limit)
+            player2 = player2_class.MyPlayer2("B", name=splitext(basename(list_players[1]))[0]+"_2", time_limit=time_limit)
         play(player1=player1, player2=player2, log_level=log_level, port=port, address=address, gui=gui, record=record, gui_path=gui_path, config=base_config)
     elif type == "host_game" :
         folder = dirname(list_players[0])

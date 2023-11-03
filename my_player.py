@@ -75,6 +75,7 @@ class MyPlayer(PlayerAbalone):
         self.tt = TranspositionTable()
 
         self.visited_nodes = 0
+        self.visited_leaf = 0
         self.cumulated_time = 0
         self.action_number = 0
         self.text_file_log = f"log_{self.piece_type}.txt"
@@ -100,8 +101,6 @@ class MyPlayer(PlayerAbalone):
         maximizing_player = self.piece_type == "W"
         depth = 3
 
-        print(current_state.get_rep())
-
         value, best_action = self.minmax_alphabeta(current_state, depth, -math.inf, math.inf, maximizing_player)
 
         self.time_consumed = time.time() - self.time_consumed
@@ -110,9 +109,10 @@ class MyPlayer(PlayerAbalone):
         self.action_number += 1
         if MyPlayer.log:
             with open(self.text_file_log, "a") as f:
-                f.write(f"Action {self.action_number} : {round(self.time_consumed,4)} s (cum. time {round(self.cumulated_time,4)} s), {self.visited_nodes} visited nodes, size tt {len(self.tt.tab)}, {round(value,8)} value\n")
+                f.write(f"Action {self.action_number} : {round(self.time_consumed,4)} s (cum. time {round(self.cumulated_time,4)} s), {self.visited_nodes} visited nodes, {self.visited_leaf} visited leaves, size tt {len(self.tt.tab)}, {round(value,8)} value\n")
                 
         self.visited_nodes = 0
+        self.visited_leaf = 0
 
         return best_action
 
@@ -168,6 +168,7 @@ class MyPlayer(PlayerAbalone):
         2) Number of marbles on the edge
         3) Sum of Manhattan distance to the center
         4) Marbles cohesion
+        5) Threat
 
         Args:
             current_state (GameState): Current game state representation
@@ -175,16 +176,18 @@ class MyPlayer(PlayerAbalone):
         Returns:
             float: the value of the heuristic function
         """
+        self.visited_leaf += 1
 
         marble_count = {"W" : 0, "B" : 0}
         distance_center = {"W" : 0, "B" : 0}
         edge_count = {"W" : 0, "B" : 0}
         cohesion = {"W" : 0, "B" : 0}
         threat = {"W" : 0, "B" : 0}
+        density = {"W" : 0, "B" : 0}
 
 
         #Loop over the environnement current_state.get_rep().get_env() = {  (a,b) :  <seahorse.game.game_layout.board.Piece> , ... }
-        for coord, marble in current_state.get_rep().get_env().items() :
+        for i, (coord, marble) in enumerate(current_state.get_rep().get_env().items()):
             color_marble = marble.get_type()
             opposition_color_marble = "W" if color_marble == "B" else "B"
             x,y,z = MyPlayer.to_cube[coord]
@@ -269,7 +272,17 @@ class MyPlayer(PlayerAbalone):
                 neighbour = current_state.get_rep().find( neighbour_coord )
                 if neighbour != -1 and neighbour.get_type() == color_marble:
                     cohesion[color_marble] += 1
-        
+
+            ###########################################################################
+            ############################## DENSITY ####################################
+            ###########################################################################
+            for j, (coord2, marble2) in enumerate(current_state.get_rep().get_env().items()):
+                if j >= i :
+                    break
+                color_marble2 = marble2.get_type()
+                if color_marble == color_marble2 :
+                    x2,y2,z2 = MyPlayer.to_cube[coord2]
+                    density[color_marble] += ( abs(x - x2) + abs(y - y2) + abs(z - z2) )/2 #Manhattan distance
 
 
 
@@ -283,19 +296,28 @@ class MyPlayer(PlayerAbalone):
         center = (distance_center["B"]/marble_count["B"] - distance_center["W"]/marble_count["W"])/4
 
         #4) Marbles cohesion
-        cohesion_diff = (cohesion["B"]/marble_count["B"] - cohesion["W"]/marble_count["W"])/6
+        cohesion_diff = (cohesion["W"]/marble_count["W"] - cohesion["B"]/marble_count["B"])/6
 
         #5) Threat
         threat_diff = threat["W"] - threat["B"]
 
-        #print(f"diff : {diff}, edge : {edge}, center : {center}, cohesion : {cohesion_diff}, threat : {threat}")
-        
-        return diff + edge + center + 2*cohesion_diff + 0.75*threat_diff
+        #6) Density
+        density_diff =  (density["B"]/(marble_count["B"]*(marble_count["B"] - 1))  - density["W"]/(marble_count["W"]*(marble_count["W"] - 1)) )/2
+
+        #print(f"diff : {diff}, edge : {edge}, center : {center}, cohesion : {cohesion_diff}, threat : {threat}, density : {k}") 
+
+        return diff + edge + center + 2*cohesion_diff + 0.5*threat_diff + density_diff
 
 
-    def guess_value(self, action : Action) :
+    def guess_value(self, action : Action, maximizing_player : bool = True) -> float:
         """
         Function to guess the value of an action (for ordering the actions).
+
+        1) If the move is push -> +1
+        2) If the move is get out of edge -> +1
+
+        Remove dumb moves  ==> return None if the move is dumb and so no need to be proposed to the player
+            - throughing one of our own marble out
         """
         current_env = action.get_current_game_state().get_rep().get_env()
         next_env = action.get_next_game_state().get_rep().get_env() 
@@ -308,7 +330,7 @@ class MyPlayer(PlayerAbalone):
         next_mask_white = numpy_next_grid == "W"
         next_mask_black = numpy_next_grid == "B"
 
-        #Check for dumb move : push a marble out of the edge
+        #Check for dumb move : push one of our own marble out
         if ( (current_mask_white == next_mask_white).all() and int(next_mask_black.sum()) < int(current_mask_black.sum())) or ( (current_mask_black == next_mask_black).all() and int(next_mask_white.sum()) < int(current_mask_white.sum()))   :
             return None #None means we don't want to select this action
 
@@ -335,12 +357,47 @@ class MyPlayer(PlayerAbalone):
             #Stop the loop
             if push and get_out_of_edge :
                 break
+        
+           
 
-        return int(push) + int(get_out_of_edge)
+        #Compute the Geometric score function (http://www.ist.tugraz.at/aichholzer/research/rp/abalone/tele1-02_aich-abalone.pdf)      
+        gamma = 0.8 #Weight of center < 1
+        #Calculate the mass center of each color
+        mass_center_W = (0,0,0), 0
+        mass_center_B = (0,0,0), 0
+        for coord, piece in next_env.items():
+            x,y,z = MyPlayer.to_cube[coord]
+            if piece.get_type() == "W" :
+                mass_center_W = (mass_center_W[0][0] + x, mass_center_W[0][1] + y, mass_center_W[0][2] + z), mass_center_W[1] + 1
+            else :
+                mass_center_B = (mass_center_B[0][0] + x, mass_center_B[0][1] + y, mass_center_B[0][2] + z), mass_center_B[1] + 1
+        #Add c (the center) to the mass center with weight gamma
+        denominator = mass_center_W[1] + mass_center_B[1] + gamma
+        mass_center = ( (mass_center_W[0][0] + mass_center_B[0][0])/denominator, (mass_center_W[0][1] + mass_center_B[0][1])/denominator, (mass_center_W[0][2] + mass_center_B[0][2])/denominator )
+        #Calculate the distance to the center for each color
+        distance_center_W = 0
+        distance_center_B = 0
+        for coord, piece in next_env.items():
+            x,y,z = MyPlayer.to_cube[coord]
+            if piece.get_type() == "W" :
+                distance_center_W += ( abs(x - mass_center[0]) + abs(y - mass_center[1]) + abs(z - mass_center[2]) )/2 #Manhattan distance
+            else :
+                distance_center_B += ( abs(x - mass_center[0]) + abs(y - mass_center[1]) + abs(z - mass_center[2]) )/2 #Manhattan distance
+        geometric_score = distance_center_B - distance_center_W if maximizing_player else distance_center_W - distance_center_B
+
+        return int(push) + int(get_out_of_edge) + geometric_score/30
+
+    
+    def lead_to_quiescence(self, action : Action) -> bool:
+        """
+        Function to check if the action lead to a quiescence state.
+        In our case, quiescence state = a capture occured
+        """
+        return len(action.get_next_game_state().get_rep().get_env() ) < len(action.get_current_game_state().get_rep().get_env() )
 
 
 
-    def get_ordered_possible_actions(self, current_state: GameState) -> list[Action]:
+    def get_ordered_possible_actions(self, current_state: GameState,  maximizing_player : bool) -> list[Action]:
         """
         Function to get the list of possible actions ordered by the guess value.
 
@@ -354,17 +411,24 @@ class MyPlayer(PlayerAbalone):
 
         possible_actions = current_state.get_possible_actions()
         action_guess = {}
+        dumb_actions = {}
         for action in possible_actions:
-            guess = self.guess_value(action)
-            if guess != None :
+            guess = self.guess_value(action, maximizing_player)
+            if guess is not None :
                 action_guess[action] = guess
+            else :
+                dumb_actions[action] = 1
+        
+        #If all the actions are dumb, we have to return the dumb actions
+        if len(action_guess) == 0 :
+            return dumb_actions
 
         #Get the list of actions sorted by the guess value
         return sorted(action_guess, key=action_guess.get, reverse=True)
 
 
 
-    def minmax_alphabeta(self, current_state: GameState, depth: int, alpha : float, beta : float, maximizing_player : bool) -> float:
+    def minmax_alphabeta(self, current_state: GameState, depth: int, alpha : float, beta : float, maximizing_player : bool, quiescence : bool = False) -> float:
         """
         Function to implement the minmax algorithm with alpha beta pruning.
 
@@ -378,16 +442,20 @@ class MyPlayer(PlayerAbalone):
         Returns:
             float: the value of the node
         """
+
         hasft = self.tt.hashfALPHA
         hash_state = self.tt.compute_zobristhash(current_state) #hash of the current state
         
         #Terminal node
-        if depth == 0 or current_state.is_done():
+        if depth == 0 and quiescence :
+            depth = 1 #We need to go deeper to check until the state is stable
+        elif depth == 0 or current_state.is_done():
             value = self.utility(current_state, depth, maximizing_player)
             if depth == 0 : 
                 #Exact evaluation
                 self.tt.store_entry(hash_state, depth, self.tt.hashfEXACT, value, None)
             return value, None
+        
 
 
         #Search in the transposition table
@@ -401,12 +469,12 @@ class MyPlayer(PlayerAbalone):
 
 
         #Find the best successor
-        possible_actions = self.get_ordered_possible_actions(current_state)
+        possible_actions = self.get_ordered_possible_actions(current_state, maximizing_player)
         #possible_actions = current_state.get_possible_actions()
         for action in possible_actions:
 
             next_state = action.get_next_game_state()
-            score, _ = self.minmax_alphabeta(next_state, depth-1, alpha, beta, not maximizing_player)
+            score, _ = self.minmax_alphabeta(next_state, depth-1, alpha, beta, not maximizing_player, self.lead_to_quiescence(action) )
             self.visited_nodes += 1
 
             if maximizing_player:
