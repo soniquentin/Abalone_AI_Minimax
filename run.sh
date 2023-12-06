@@ -1,1 +1,0 @@
-python main_abalone.py -t local my_player3.py my_player2.py
